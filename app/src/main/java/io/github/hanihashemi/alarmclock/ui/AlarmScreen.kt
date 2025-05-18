@@ -4,9 +4,15 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -14,11 +20,35 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import io.github.hanihashemi.alarmclock.AlarmReceiver
 import java.util.*
 import android.app.TimePickerDialog
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.media.RingtoneManager
+import android.os.Build
+import android.util.Log
+import android.widget.Toast
+import androidx.compose.ui.res.painterResource
+import io.github.hanihashemi.alarmclock.R
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlinx.coroutines.delay
+import io.github.hanihashemi.alarmclock.AlarmClockApplication
+import io.github.hanihashemi.alarmclock.AlarmService
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,39 +58,286 @@ fun AlarmScreen() {
     var showTimePicker by remember { mutableStateOf(false) }
     var tempHour by remember { mutableStateOf(6) }
     var tempMinute by remember { mutableStateOf(0) }
+    var is24HourFormat by remember { mutableStateOf(false) }
+    var isPm by remember { mutableStateOf(false) }
     var editingAlarm by remember { mutableStateOf<AlarmItem?>(null) }
+    
+    // State to track if alarm is currently ringing
+    var isAlarmRinging by remember { mutableStateOf(false) }
+    
+    // MediaPlayer for testing sound
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
+    // Check if an alarm is currently ringing by querying application
+    LaunchedEffect(Unit) {
+        isAlarmRinging = (context.applicationContext as? AlarmClockApplication)?.mediaPlayer != null
+        
+        // Check status periodically
+        while(true) {
+            delay(1000)
+            isAlarmRinging = (context.applicationContext as? AlarmClockApplication)?.mediaPlayer != null
+        }
+    }
 
     if (showTimePicker) {
-        TimePickerDialog(
-            context,
-            { _, hour: Int, minute: Int ->
-                if (editingAlarm != null) {
-                    alarms = alarms.map {
-                        if (it.id == editingAlarm!!.id) it.copy(hour = hour, minute = minute) else it
-                    }
-                    setAlarm(context, hour, minute, editingAlarm!!.id)
-                    editingAlarm = null
-                } else {
-                    val newId = (alarms.maxOfOrNull { it.id } ?: 0) + 1
-                    alarms = alarms + AlarmItem(newId, hour, minute, true)
-                    setAlarm(context, hour, minute, newId)
-                }
-                showTimePicker = false
-            },
-            tempHour,
-            tempMinute,
-            false
-        ).apply {
-            setOnCancelListener {
+        ModernTimePickerDialog(
+            onDismiss = { 
                 showTimePicker = false
                 editingAlarm = null
-            }
-        }.show()
+            },
+            onConfirm = { hour, minute ->
+                try {
+                    Toast.makeText(context, "Bắt đầu đặt báo thức", Toast.LENGTH_SHORT).show()
+                    if (editingAlarm != null) {
+                        alarms = alarms.map {
+                            if (it.id == editingAlarm!!.id) it.copy(hour = hour, minute = minute) else it
+                        }
+                        setAlarm(context, hour, minute, editingAlarm!!.id)
+                        editingAlarm = null
+                    } else {
+                        val newId = (alarms.maxOfOrNull { it.id } ?: 0) + 1
+                        alarms = alarms + AlarmItem(newId, hour, minute, true)
+                        setAlarm(context, hour, minute, newId)
+                    }
+                    showTimePicker = false
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Lỗi: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            },
+            initialHour = tempHour,
+            initialMinute = tempMinute,
+            is24HourFormat = is24HourFormat
+        )
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Show prominent stop alarm button when alarm is ringing
+        if (isAlarmRinging) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFFF3B30)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "BÁO THỨC ĐANG KÊU!",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            try {
+                                // Stop alarm through application class
+                                (context.applicationContext as? AlarmClockApplication)?.stopAlarm()
+                                
+                                // Also stop service
+                                val intent = Intent(context, AlarmService::class.java)
+                                context.stopService(intent)
+                                
+                                // Send stop action broadcast
+                                val stopIntent = Intent(context, AlarmReceiver::class.java).apply {
+                                    action = AlarmReceiver.ACTION_STOP_ALARM
+                                }
+                                context.sendBroadcast(stopIntent)
+                                
+                                Toast.makeText(context, "Đã tắt báo thức", Toast.LENGTH_SHORT).show()
+                                
+                                // Update state
+                                isAlarmRinging = false
+                            } catch (e: Exception) {
+                                Log.e("AlarmScreen", "Error stopping alarm: ${e.message}", e)
+                                Toast.makeText(context, "Lỗi khi tắt báo thức: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White
+                        )
+                    ) {
+                        Text(
+                            "TẮT BÁO THỨC",
+                            color = Color(0xFFFF3B30),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+            }
+        }
+        
         Text("Báo thức", style = MaterialTheme.typography.titleLarge)
+        
+        // Kiểm tra âm thanh báo thức button
+        Button(
+            onClick = {
+                try {
+                    // Kiểm tra báo thức đã đặt
+                    val calendar = Calendar.getInstance()
+                    val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
+                    val currentMinute = calendar.get(Calendar.MINUTE)
+                    val currentTimeString = String.format("%02d:%02d", currentHour, currentMinute)
+                    
+                    // Thông báo các báo thức hiện tại
+                    val alarmInfo = if (alarms.isEmpty()) {
+                        "Không có báo thức nào được đặt"
+                    } else {
+                        "Báo thức đã đặt: " + alarms.joinToString(", ") { 
+                            String.format("%02d:%02d", it.hour, it.minute) 
+                        }
+                    }
+                    
+                    Toast.makeText(
+                        context, 
+                        "Giờ hiện tại: $currentTimeString\n$alarmInfo",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    
+                    // Kiểm tra AlarmManager
+                    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                    val isAlarmSupported = alarmManager != null
+                    
+                    Toast.makeText(
+                        context, 
+                        if (isAlarmSupported) "AlarmManager hỗ trợ" else "AlarmManager không hỗ trợ",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Lỗi kiểm tra: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6D6875))
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_outline_alarm_24),
+                contentDescription = "Kiểm tra báo thức",
+                tint = Color.White
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Kiểm tra thông tin báo thức")
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        // Test sound button
+        Button(
+            onClick = {
+                if (mediaPlayer?.isPlaying == true) {
+                    // Nếu đang phát, dừng âm thanh
+                    mediaPlayer?.apply {
+                        if (isPlaying) {
+                            stop()
+                        }
+                        release()
+                    }
+                    mediaPlayer = null
+                    Toast.makeText(context, "Đã dừng âm thanh kiểm tra", Toast.LENGTH_SHORT).show()
+                } else {
+                    // Nếu không phát, bắt đầu phát
+                    try {
+                        // Release previous player if exists
+                        mediaPlayer?.release()
+                        
+                        // Set maximum volume
+                        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+                        audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0)
+                        
+                        // Đảm bảo không tắt tiếng
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            audioManager.adjustStreamVolume(
+                                AudioManager.STREAM_ALARM,
+                                AudioManager.ADJUST_UNMUTE,
+                                0
+                            )
+                        }
+                        
+                        // Create new player
+                        mediaPlayer = MediaPlayer().apply {
+                            // Configure audio attributes
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                setAudioAttributes(
+                                    AudioAttributes.Builder()
+                                        .setUsage(AudioAttributes.USAGE_ALARM)
+                                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                        .build()
+                                )
+                            } else {
+                                @Suppress("DEPRECATION")
+                                setAudioStreamType(AudioManager.STREAM_ALARM)
+                            }
+                            
+                            // Lấy âm thanh báo thức hệ thống
+                            try {
+                                // Lấy âm thanh báo thức mặc định của hệ thống
+                                val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                                
+                                // Nếu không có âm thanh báo thức, thử dùng âm báo thông báo
+                                val notificationUri = if (alarmUri == null) {
+                                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                                } else {
+                                    alarmUri
+                                }
+                                
+                                // Nếu vẫn không có, dùng nhạc chuông
+                                val uriToUse = notificationUri ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                                
+                                setDataSource(context, uriToUse)
+                                prepare()
+                                isLooping = true
+                                setVolume(1.0f, 1.0f)
+                                start()
+                                Toast.makeText(context, "Đang phát âm thanh báo thức hệ thống", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Lỗi mở file âm thanh hệ thống: ${e.message}", Toast.LENGTH_LONG).show()
+                                Log.e("AlarmScreen", "Error playing system sound", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Lỗi phát âm thanh: ${e.message}", Toast.LENGTH_LONG).show()
+                        Log.e("AlarmScreen", "General error testing sound", e)
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (mediaPlayer?.isPlaying == true) Color(0xFFC71F37) else Color(0xFFB5838D)
+            )
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    painter = painterResource(
+                        id = if (mediaPlayer?.isPlaying == true) 
+                            R.drawable.ic_outline_timer_24 
+                        else 
+                            R.drawable.ic_outline_alarm_24
+                    ),
+                    contentDescription = if (mediaPlayer?.isPlaying == true) "Dừng âm thanh" else "Phát âm thanh",
+                    tint = Color.White
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (mediaPlayer?.isPlaying == true) "Dừng kiểm tra âm thanh" else "Kiểm tra âm thanh báo thức"
+                )
+            }
+        }
+        
         Spacer(modifier = Modifier.height(16.dp))
+        
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(alarms) { alarm ->
                 Card(
@@ -126,38 +403,672 @@ fun AlarmScreen() {
             Text("Thêm báo thức mới")
         }
     }
+    
+    // Clean up MediaPlayer when screen is destroyed
+    DisposableEffect(Unit) {
+        onDispose {
+            mediaPlayer?.release()
+            mediaPlayer = null
+        }
+    }
+}
+
+@Composable
+fun ModernTimePickerDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (hour: Int, minute: Int) -> Unit,
+    initialHour: Int = 0,
+    initialMinute: Int = 0,
+    is24HourFormat: Boolean = false
+) {
+    var hour by remember { mutableStateOf(initialHour) }
+    var minute by remember { mutableStateOf(initialMinute) }
+    var isPm by remember { mutableStateOf(initialHour >= 12) }
+    var isSelectingHour by remember { mutableStateOf(true) }
+    
+    val displayHour = when {
+        is24HourFormat -> hour
+        hour == 0 -> 12
+        hour > 12 -> hour - 12
+        else -> hour
+    }
+    
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF121212)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Chọn giờ",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 16.dp),
+                    color = Color.White
+                )
+                
+                // Digital time display
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Hour selector
+                    Box(
+                        modifier = Modifier
+                            .width(70.dp)
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelectingHour) Color(0xFF1F3B5B) else Color(0xFF2A2A2A))
+                            .clickable { isSelectingHour = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = String.format("%02d", displayHour),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    
+                    Text(
+                        text = ":",
+                        fontSize = 24.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        color = Color.White
+                    )
+                    
+                    // Minute selector
+                    Box(
+                        modifier = Modifier
+                            .width(70.dp)
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (!isSelectingHour) Color(0xFF1F3B5B) else Color(0xFF2A2A2A))
+                            .clickable { isSelectingHour = false },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = String.format("%02d", minute),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    
+                    // AM/PM selector (only for 12-hour format)
+                    if (!is24HourFormat) {
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(
+                            modifier = Modifier
+                                .width(60.dp) // Tăng kích thước để dễ nhấn
+                                .height(50.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, Color(0xFF3F2E5C), RoundedCornerShape(8.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .background(if (!isPm) Color(0xFF3F2E5C) else Color(0xFF1A1A1A))
+                                    .clickable { 
+                                        isPm = false
+                                        // Nếu là PM trước đó, chuyển sang AM
+                                        if (hour >= 12) {
+                                            hour -= 12
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "AM",
+                                    fontSize = 16.sp,
+                                    fontWeight = if (!isPm) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (!isPm) Color.White else Color.Gray
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .background(if (isPm) Color(0xFF3F2E5C) else Color(0xFF1A1A1A))
+                                    .clickable { 
+                                        isPm = true
+                                        // Nếu là AM trước đó, chuyển sang PM
+                                        if (hour < 12) {
+                                            hour += 12
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "PM",
+                                    fontSize = 16.sp,
+                                    fontWeight = if (isPm) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isPm) Color.White else Color.Gray
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                // Analog clock
+                Box(
+                    modifier = Modifier
+                        .size(240.dp)
+                        .padding(8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Clock face
+                    AnalogClockFace(
+                        hour = hour % 12,
+                        minute = minute,
+                        isSelectingHour = isSelectingHour,
+                        onTimeSelected = { h, m ->
+                            if (isSelectingHour) {
+                                hour = if (isPm && !is24HourFormat) {
+                                    if (h == 12) 12 else h + 12
+                                } else if (!isPm && !is24HourFormat) {
+                                    if (h == 12) 0 else h
+                                } else {
+                                    h
+                                }
+                                // Automatically switch to minute selection after choosing hour
+                                isSelectingHour = false
+                            } else {
+                                minute = m
+                            }
+                        }
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                // Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Hủy", color = Color(0xFF90CAF9))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = {
+                            // Xử lý chính xác giờ AM/PM
+                            val finalHour = if (!is24HourFormat) {
+                                if (isPm && displayHour < 12) {
+                                    displayHour + 12
+                                } else if (!isPm && displayHour == 12) {
+                                    0
+                                } else if (isPm && displayHour == 12) {
+                                    12
+                                } else {
+                                    displayHour
+                                }
+                            } else {
+                                hour
+                            }
+                            onConfirm(finalHour, minute)
+                        }
+                    ) {
+                        Text("OK", color = Color(0xFF90CAF9))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AnalogClockFace(
+    hour: Int,
+    minute: Int,
+    isSelectingHour: Boolean,
+    onTimeSelected: (hour: Int, minute: Int) -> Unit
+) {
+    val selectedHour = remember { mutableStateOf(hour) }
+    val selectedMinute = remember { mutableStateOf(minute) }
+    
+    // Update state when props change
+    LaunchedEffect(hour, minute) {
+        selectedHour.value = hour
+        selectedMinute.value = minute
+    }
+    
+    Box(
+        modifier = Modifier
+            .size(240.dp)
+            .clickable { /* This makes the entire area clickable */ }
+    ) {
+        // Clock background circle
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF2A2A2A), CircleShape)
+        )
+        
+        if (isSelectingHour) {
+            // Draw hour indicators when selecting hour
+            for (i in 1..12) {
+                val angle = (i * 30 - 90) * (PI / 180f)
+                val radius = 100.dp // slightly smaller than the clock face
+                val x = cos(angle).toFloat()
+                val y = sin(angle).toFloat()
+                
+                // Calculate position
+                val xPos = 120.dp + radius * x
+                val yPos = 120.dp + radius * y
+                
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .absoluteOffset(
+                            x = xPos - 16.dp, // Center the box
+                            y = yPos - 16.dp
+                        )
+                        .clickable {
+                            selectedHour.value = if (i == 12) 0 else i
+                            onTimeSelected(if (i == 12) 0 else i, selectedMinute.value)
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Draw highlighted hour (current position)
+                    if (i == selectedHour.value % 12 || (i == 12 && selectedHour.value % 12 == 0)) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(Color(0xFF90CAF9), CircleShape)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .background(Color.White, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (i == 12) "12" else i.toString(),
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        // Draw regular hour
+                        Text(
+                            text = if (i == 12) "12" else i.toString(),
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        } else {
+            // Draw minute indicators when selecting minute
+            // Minute markers in steps of 5
+            for (i in 0..11) {
+                val minute = i * 5
+                val angle = (i * 30 - 90) * (PI / 180f)
+                val radius = 100.dp 
+                val x = cos(angle).toFloat()
+                val y = sin(angle).toFloat()
+                
+                val xPos = 120.dp + radius * x
+                val yPos = 120.dp + radius * y
+                
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .absoluteOffset(
+                            x = xPos - 16.dp,
+                            y = yPos - 16.dp
+                        )
+                        .clickable {
+                            selectedMinute.value = minute
+                            onTimeSelected(selectedHour.value, minute)
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Draw highlighted minute marker
+                    if (minute == selectedMinute.value) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(Color(0xFF90CAF9), CircleShape)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .background(Color.White, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = String.format("%02d", minute),
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        // Draw regular minute marker
+                        Text(
+                            text = String.format("%02d", minute),
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+            
+            // Additional minute markers for more precise selection
+            for (i in 0..59) {
+                if (i % 5 != 0) { // Skip the main markers we've already drawn
+                    val angle = (i * 6 - 90) * (PI / 180f)
+                    val radius = 100.dp
+                    val x = cos(angle).toFloat()
+                    val y = sin(angle).toFloat()
+                    
+                    val xPos = 120.dp + radius * x
+                    val yPos = 120.dp + radius * y
+                    
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .absoluteOffset(
+                                x = xPos - 6.dp,
+                                y = yPos - 6.dp
+                            )
+                            .clickable {
+                                selectedMinute.value = i
+                                onTimeSelected(selectedHour.value, i)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Small dots for minutes
+                        if (i == selectedMinute.value) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(Color(0xFF90CAF9), CircleShape)
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(4.dp)
+                                    .background(Color.Gray, CircleShape)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Draw clock hands with Canvas
+        Canvas(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            val center = Offset(size.width / 2, size.height / 2)
+            val radius = size.width / 2 - 16.dp.toPx()
+            
+            // Draw different hands based on what we're selecting
+            if (isSelectingHour) {
+                // Hour hand
+                val hourAngle = ((selectedHour.value % 12) * 30 - 90) * (PI / 180f)
+                val hourHandLength = radius * 0.5f
+                drawLine(
+                    color = Color(0xFF90CAF9),
+                    start = center,
+                    end = Offset(
+                        center.x + hourHandLength * cos(hourAngle).toFloat(),
+                        center.y + hourHandLength * sin(hourAngle).toFloat()
+                    ),
+                    strokeWidth = 4.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            } else {
+                // Minute hand
+                val minuteAngle = (selectedMinute.value * 6 - 90) * (PI / 180f)
+                val minuteHandLength = radius * 0.7f
+                drawLine(
+                    color = Color(0xFF90CAF9),
+                    start = center,
+                    end = Offset(
+                        center.x + minuteHandLength * cos(minuteAngle).toFloat(),
+                        center.y + minuteHandLength * sin(minuteAngle).toFloat()
+                    ),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+            
+            // Center dot
+            drawCircle(
+                color = Color(0xFF90CAF9),
+                radius = 4.dp.toPx(),
+                center = center
+            )
+        }
+    }
+}
+
+@Composable
+fun CustomNumberSelector(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    range: IntRange,
+    suffix: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        IconButton(
+            onClick = { 
+                if (value < range.last) {
+                    onValueChange(value + 1)
+                }
+            }
+        ) {
+            Text("▲", style = MaterialTheme.typography.titleMedium)
+        }
+        
+        Text(
+            text = "$value $suffix",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier
+                .border(1.dp, MaterialTheme.colorScheme.primary, shape = MaterialTheme.shapes.small)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+        
+        IconButton(
+            onClick = { 
+                if (value > range.first) {
+                    onValueChange(value - 1)
+                }
+            }
+        ) {
+            Text("▼", style = MaterialTheme.typography.titleMedium)
+        }
+    }
 }
 
 @Immutable
 data class AlarmItem(val id: Int, val hour: Int, val minute: Int, val enabled: Boolean)
 
 fun setAlarm(context: Context, hour: Int, minute: Int, id: Int) {
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    val intent = Intent(context, AlarmReceiver::class.java)
-    val pendingIntent = PendingIntent.getBroadcast(
-        context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-    val calendar = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, hour)
-        set(Calendar.MINUTE, minute)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-        if (before(Calendar.getInstance())) {
-            add(Calendar.DATE, 1)
+    try {
+        Log.d("AlarmScreen", "Setting alarm for $hour:$minute, id=$id")
+        Toast.makeText(context, "Bắt đầu setAlarm $hour:$minute", Toast.LENGTH_SHORT).show()
+        
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+        if (alarmManager == null) {
+            Log.e("AlarmScreen", "AlarmManager null")
+            Toast.makeText(context, "AlarmManager null", Toast.LENGTH_SHORT).show()
+            return
         }
+        
+        // Create explicit intent for AlarmReceiver
+        val intent = Intent(context, AlarmReceiver::class.java).apply {
+            putExtra("ALARM_ID", id)
+            // Add flags to ensure delivery even if app is stopped
+            flags = Intent.FLAG_INCLUDE_STOPPED_PACKAGES
+        }
+        
+        // Create pending intent with proper flags
+        val pendingIntent = PendingIntent.getBroadcast(
+            context, 
+            id, 
+            intent, 
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        Log.d("AlarmScreen", "PendingIntent created")
+        Toast.makeText(context, "PendingIntent OK", Toast.LENGTH_SHORT).show()
+        
+        // Setup calendar for alarm time
+        val now = Calendar.getInstance()
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            
+            // If time has passed today, schedule for tomorrow
+            if (before(now)) {
+                add(Calendar.DATE, 1)
+                Log.d("AlarmScreen", "Time passed, scheduling for tomorrow")
+            }
+        }
+        
+        // Calculate time difference for logging
+        val timeDiffMillis = calendar.timeInMillis - now.timeInMillis
+        val timeDiffMinutes = timeDiffMillis / (1000 * 60)
+        val timeDiffHours = timeDiffMinutes / 60
+        val remainingMinutes = timeDiffMinutes % 60
+        
+        // Hiển thị thông báo thời gian dự kiến báo thức sẽ kêu
+        val alarmTimeFormat = String.format(
+            "Đặt báo thức cho: %02d/%02d/%d %02d:%02d (còn %d giờ %d phút)",
+            calendar.get(Calendar.DAY_OF_MONTH),
+            calendar.get(Calendar.MONTH) + 1,
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE),
+            timeDiffHours,
+            remainingMinutes
+        )
+        
+        Log.d("AlarmScreen", alarmTimeFormat)
+        Toast.makeText(context, alarmTimeFormat, Toast.LENGTH_LONG).show()
+        
+        // Try different alarm setting methods based on API level
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (alarmManager.canScheduleExactAlarms()) {
+                    // For API 31+ with exact alarm permission
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        calendar.timeInMillis,
+                        pendingIntent
+                    )
+                    Log.d("AlarmScreen", "Alarm set with setExactAndAllowWhileIdle API 31+")
+                } else {
+                    // Fallback if can't schedule exact alarms
+                    val alarmClockInfo = AlarmManager.AlarmClockInfo(
+                        calendar.timeInMillis,
+                        pendingIntent
+                    )
+                    alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                    Log.d("AlarmScreen", "Alarm set with setAlarmClock API 31+")
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // For API 23-30
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    calendar.timeInMillis,
+                    pendingIntent
+                )
+                Log.d("AlarmScreen", "Alarm set with setExactAndAllowWhileIdle API 23-30")
+            } else {
+                // For API 22 and below
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    calendar.timeInMillis,
+                    pendingIntent
+                )
+                Log.d("AlarmScreen", "Alarm set with setExact API <23")
+            }
+            
+            // Additional backup alarm using setAlarmClock which shows in system UI
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(
+                    calendar.timeInMillis,
+                    pendingIntent
+                )
+                try {
+                    alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                    Log.d("AlarmScreen", "Backup alarm set with setAlarmClock")
+                } catch (e: Exception) {
+                    Log.e("AlarmScreen", "Error setting backup alarm", e)
+                }
+            }
+            
+            Toast.makeText(context, "Báo thức đã được đặt thành công!", Toast.LENGTH_SHORT).show()
+            Log.d("AlarmScreen", "Alarm successfully scheduled for ${calendar.time}")
+            
+        } catch (e: Exception) {
+            Log.e("AlarmScreen", "Error setting alarm", e)
+            Toast.makeText(
+                context, 
+                "Lỗi đặt báo thức: ${e.message}. Thử phương pháp khác...",
+                Toast.LENGTH_LONG
+            ).show()
+            
+            // Fallback method if other methods fail
+            try {
+                alarmManager.set(
+                    AlarmManager.RTC_WAKEUP,
+                    calendar.timeInMillis,
+                    pendingIntent
+                )
+                Log.d("AlarmScreen", "Fallback alarm set with set()")
+                Toast.makeText(context, "Đã đặt báo thức phương pháp dự phòng", Toast.LENGTH_SHORT).show()
+            } catch (ex: Exception) {
+                Log.e("AlarmScreen", "Critical error: Fallback alarm setting failed", ex)
+                Toast.makeText(
+                    context,
+                    "Lỗi nghiêm trọng: Không thể đặt báo thức. Thử khởi động lại thiết bị.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("AlarmScreen", "Critical error in setAlarm", e)
+        Toast.makeText(
+            context,
+            "Lỗi nghiêm trọng khi đặt báo thức: ${e.message}",
+            Toast.LENGTH_LONG
+        ).show()
     }
-    alarmManager.setExactAndAllowWhileIdle(
-        AlarmManager.RTC_WAKEUP,
-        calendar.timeInMillis,
-        pendingIntent
-    )
 }
 
 fun cancelAlarm(context: Context, id: Int) {
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    val intent = Intent(context, AlarmReceiver::class.java)
-    val pendingIntent = PendingIntent.getBroadcast(
-        context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-    alarmManager.cancel(pendingIntent)
+    try {
+        Log.d("AlarmScreen", "Cancelling alarm id=$id")
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, AlarmReceiver::class.java)
+        intent.putExtra("ALARM_ID", id)
+        val pendingIntent = PendingIntent.getBroadcast(
+            context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.cancel(pendingIntent)
+        pendingIntent.cancel()
+        Toast.makeText(context, "Đã hủy báo thức", Toast.LENGTH_SHORT).show()
+        Log.d("AlarmScreen", "Alarm cancelled successfully")
+    } catch (e: Exception) {
+        Log.e("AlarmScreen", "Error cancelling alarm", e)
+        Toast.makeText(context, "Lỗi khi hủy báo thức: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
 } 
