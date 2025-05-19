@@ -7,10 +7,6 @@
 
 A modern, feature-rich alarm clock application built entirely with [Jetpack Compose](https://developer.android.com/jetpack/compose) for Android. This project delivers a beautiful, extensible, and user-friendly experience for alarms, timers, stopwatches, and sleep tracking features.
 
-## Screenshots
-
-![App Screenshot](https://user-images.githubusercontent.com/2553497/212576539-355770d2-bed4-4fd8-ad55-739252af5b22.png)
-
 ## Installation Guide
 
 1. **System Requirements:**
