@@ -2,6 +2,9 @@ package io.github.hanihashemi.alarmclock
 
 import android.app.Application
 import android.media.MediaPlayer
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 
 class AlarmClockApplication : Application() {
@@ -24,6 +27,11 @@ class AlarmClockApplication : Application() {
         
         _mediaPlayer = player
         Log.d(TAG, "New MediaPlayer set: ${player != null}")
+    }
+    
+    fun clearMediaPlayer() {
+        _mediaPlayer = null
+        Log.d(TAG, "MediaPlayer reference cleared")
     }
     
     fun stopAlarm() {

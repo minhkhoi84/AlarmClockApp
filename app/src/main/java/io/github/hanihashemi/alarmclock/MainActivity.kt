@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import io.github.hanihashemi.alarmclock.R
 import io.github.hanihashemi.alarmclock.ui.AnalogClockComponent
 import io.github.hanihashemi.alarmclock.ui.shadow
 import io.github.hanihashemi.alarmclock.ui.theme.AlarmClockTheme
@@ -36,10 +37,12 @@ import java.util.*
 import io.github.hanihashemi.alarmclock.ui.TimerScreen
 import io.github.hanihashemi.alarmclock.ui.StopwatchScreen
 import io.github.hanihashemi.alarmclock.ui.AlarmScreen
-import io.github.hanihashemi.alarmclock.ui.NoteScreen
+import io.github.hanihashemi.alarmclock.ui.BedtimeScreen
+import io.github.hanihashemi.alarmclock.ui.ClockScreen
+import io.github.hanihashemi.alarmclock.ui.WorldClockScreen
+import io.github.hanihashemi.alarmclock.ui.CountryClockScreen
 
 class MainActivity : ComponentActivity() {
-
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -88,174 +91,63 @@ class MainActivity : ComponentActivity() {
             Log.d("MainActivity", "App launched from alarm trigger")
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
             )
         }
 
         setContent {
-            var hour by remember { mutableStateOf("0") }
-            var minute by remember { mutableStateOf("0") }
-            var second by remember { mutableStateOf("0") }
-            var amOrPm by remember { mutableStateOf("0") }
-
-            LaunchedEffect(Unit) {
-                while (true) {
-                    val cal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Ho_Chi_Minh"))
-                    hour = cal.get(Calendar.HOUR).run {
-                        if (this.toString().length == 1) "0$this" else "$this"
-                    }
-                    minute = cal.get(Calendar.MINUTE).run {
-                        if (this.toString().length == 1) "0$this" else "$this"
-                    }
-                    second = cal.get(Calendar.SECOND).run {
-                        if (this.toString().length == 1) "0$this" else "$this"
-                    }
-                    amOrPm = cal.get(Calendar.AM_PM).run {
-                        if (this == Calendar.AM) "AM" else "PM"
-                    }
-
-                    delay(1000)
-                }
-            }
-
+            var selectedScreen by remember { mutableStateOf(0) }
+            var currentScreen by remember { mutableStateOf<Screen>(Screen.MainClock) }
+            
             AlarmClockTheme {
-                // Set initial screen to Alarm if launched from alarm notification
-                var selectedScreen by remember { mutableStateOf(if (isFromAlarm) 0 else 2) }
-                
-                // Check if alarm is ringing
-                var isAlarmRinging by remember { mutableStateOf(false) }
-                
-                // Periodically check if alarm is ringing
-                LaunchedEffect(Unit) {
-                    while(true) {
-                        isAlarmRinging = (applicationContext as AlarmClockApplication).mediaPlayer != null
-                        delay(1000)
-                    }
-                }
-                
-                // If alarm is ringing and app was launched from alarm notification,
-                // show a fullscreen alarm stop UI
-                if (isFromAlarm && isAlarmRinging) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color(0xFFFF3B30)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth(0.8f)
-                                .padding(32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            // Current time
-                            Text(
-                                text = "$hour:$minute",
-                                style = MaterialTheme.typography.displayLarge,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold
-                            )
-                            
-                            Text(
-                                text = amOrPm,
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = Color.White.copy(alpha = 0.8f)
-                            )
-                            
-                            Spacer(modifier = Modifier.height(64.dp))
-                            
-                            Text(
-                                text = "BÁO THỨC",
-                                style = MaterialTheme.typography.headlineLarge,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold
-                            )
-                            
-                            Spacer(modifier = Modifier.height(64.dp))
-                            
-                            Button(
-                                onClick = {
-                                    try {
-                                        // Stop alarm through application class
-                                        (applicationContext as AlarmClockApplication).stopAlarm()
-                                        
-                                        // Also stop service
-                                        val intent = Intent(applicationContext, AlarmService::class.java)
-                                        stopService(intent)
-                                        
-                                        // Send stop action broadcast
-                                        val stopIntent = Intent(applicationContext, AlarmReceiver::class.java).apply {
-                                            action = AlarmReceiver.ACTION_STOP_ALARM
-                                        }
-                                        sendBroadcast(stopIntent)
-                                        
-                                        Toast.makeText(applicationContext, "Đã tắt báo thức", Toast.LENGTH_SHORT).show()
-                                    } catch (e: Exception) {
-                                        Log.e("MainActivity", "Error stopping alarm: ${e.message}", e)
-                                        Toast.makeText(applicationContext, "Lỗi khi tắt báo thức: ${e.message}", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(80.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color.White
-                                ),
-                                shape = RoundedCornerShape(40.dp)
-                            ) {
-                                Text(
-                                    "TẮT BÁO THỨC",
-                                    color = Color(0xFFFF3B30),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 24.sp
+                when (val screen = currentScreen) {
+                    is Screen.MainClock -> {
+                        Scaffold(
+                            bottomBar = {
+                                NavigationBarComponent(
+                                    selectedScreen = selectedScreen,
+                                    onScreenSelected = { selectedScreen = it }
                                 )
                             }
-                        }
-                    }
-                } else {
-                    Scaffold(bottomBar = {
-                        NavigationBarComponent(selectedScreen = selectedScreen, onScreenSelected = { selectedScreen = it })
-                    }) {
-                        Box(
-                            modifier = Modifier
-                                .padding(it)
-                                .fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            when (selectedScreen) {
-                                0 -> AlarmScreen()
-                                1 -> TimerScreen()
-                                2 -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    HeaderComponent()
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .fillMaxHeight(fraction = 0.8f),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            AnalogClockComponent(
-                                                hour = hour.toInt(),
-                                                minute = minute.toInt(),
-                                                second = second.toInt()
-                                            )
-                                            Spacer(modifier = Modifier.height(24.dp))
-                                            DigitalClockComponent(
-                                                hour = hour,
-                                                minute = minute,
-                                                amOrPm = amOrPm,
-                                            )
+                        ) { paddingValues ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(paddingValues)
+                            ) {
+                                when (selectedScreen) {
+                                    0 -> AlarmScreen()
+                                    1 -> StopwatchScreen()
+                                    2 -> ClockScreen(
+                                        navigateToWorldClock = {
+                                            currentScreen = Screen.WorldClock
                                         }
-                                    }
+                                    )
+                                    3 -> TimerScreen()
+                                    4 -> BedtimeScreen()
+                                    else -> AlarmScreen()
                                 }
-                                3 -> StopwatchScreen()
-                                4 -> NoteScreen()
-                                // Thêm các màn hình khác nếu muốn
-                                else -> HeaderComponent()
                             }
                         }
+                    }
+                    is Screen.WorldClock -> {
+                        WorldClockScreen(
+                            navigateToCountry = { countryName ->
+                                currentScreen = Screen.CountryClock(countryName)
+                            },
+                            onBackPressed = {
+                                currentScreen = Screen.MainClock
+                            }
+                        )
+                    }
+                    is Screen.CountryClock -> {
+                        CountryClockScreen(
+                            countryName = screen.countryName,
+                            onBackPressed = {
+                                currentScreen = Screen.WorldClock
+                            }
+                        )
                     }
                 }
             }
@@ -270,12 +162,17 @@ class MainActivity : ComponentActivity() {
             // Keep screen on when alarm triggers
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
             )
         }
     }
+}
+
+sealed class Screen {
+    object MainClock : Screen()
+    object WorldClock : Screen()
+    data class CountryClock(val countryName: String) : Screen()
 }
 
 @Composable
@@ -329,24 +226,4 @@ fun NavigationBarComponent(selectedScreen: Int, onScreenSelected: (Int) -> Unit)
             )
         }, selected = selectedScreen == 4, onClick = { onScreenSelected(4) })
     }
-}
-
-@Composable
-fun DigitalClockComponent(
-    hour: String,
-    minute: String,
-    amOrPm: String,
-) {
-    Text(
-        text = "$hour:$minute $amOrPm", style = MaterialTheme.typography.titleLarge
-    )
-    Text(
-        text = "Hà Nội, Việt Nam", style = MaterialTheme.typography.bodyMedium.merge(
-            TextStyle(
-                color = MaterialTheme.colorScheme.onBackground.copy(
-                    alpha = 0.6f
-                )
-            )
-        )
-    )
 }

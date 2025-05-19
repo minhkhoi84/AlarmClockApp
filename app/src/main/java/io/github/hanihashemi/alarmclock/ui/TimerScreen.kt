@@ -56,31 +56,34 @@ fun TimerScreen() {
             OutlinedTextField(
                 value = inputHours,
                 onValueChange = { if (it.all { c -> c.isDigit() }) inputHours = it },
-                label = { Text("Giờ") },
+                label = { Text("Hours") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(80.dp)
+                modifier = Modifier.width(100.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             OutlinedTextField(
                 value = inputMinutes,
                 onValueChange = { if (it.all { c -> c.isDigit() }) inputMinutes = it },
-                label = { Text("Phút") },
+                label = { Text("Min") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(80.dp)
+                modifier = Modifier.width(100.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             OutlinedTextField(
                 value = inputSeconds,
                 onValueChange = { if (it.all { c -> c.isDigit() }) inputSeconds = it },
-                label = { Text("Giây") },
+                label = { Text("Sec") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(80.dp)
+                modifier = Modifier.width(100.dp)
             )
         }
         Spacer(modifier = Modifier.height(24.dp))
         Text("%02d:%02d:%02d".format(hours, minutes, seconds), fontSize = 48.sp)
         Spacer(modifier = Modifier.height(24.dp))
-        Row {
+        Row(
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Button(
                 onClick = {
                     val h = inputHours.toIntOrNull() ?: 0
@@ -97,19 +100,22 @@ fun TimerScreen() {
                         isPaused = false
                     }
                 },
-                enabled = !isRunning || totalSeconds == 0
-            ) { Text("Bắt đầu") }
-            Spacer(modifier = Modifier.width(8.dp))
+                enabled = !isRunning || totalSeconds == 0,
+                modifier = Modifier.height(40.dp)
+            ) { Text("Start") }
+            
             Button(
                 onClick = { isPaused = true },
-                enabled = isRunning && !isPaused
-            ) { Text("Tạm dừng") }
-            Spacer(modifier = Modifier.width(8.dp))
+                enabled = isRunning && !isPaused,
+                modifier = Modifier.height(40.dp)
+            ) { Text("Pause") }
+            
             Button(
                 onClick = { isPaused = false },
-                enabled = isRunning && isPaused
-            ) { Text("Tiếp tục") }
-            Spacer(modifier = Modifier.width(8.dp))
+                enabled = isRunning && isPaused,
+                modifier = Modifier.height(40.dp)
+            ) { Text("Resume") }
+            
             Button(
                 onClick = {
                     isRunning = false
@@ -122,12 +128,13 @@ fun TimerScreen() {
                     minutes = m
                     seconds = s
                 },
-                enabled = isRunning || isPaused
-            ) { Text("Đặt lại") }
+                enabled = isRunning || isPaused,
+                modifier = Modifier.height(40.dp)
+            ) { Text("Reset") }
         }
         if (totalSeconds == 0 && initialTotalSeconds > 0) {
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Hết giờ!", color = MaterialTheme.colorScheme.error, fontSize = 20.sp)
+            Text("Time's up!", color = MaterialTheme.colorScheme.error, fontSize = 20.sp)
         }
     }
 } 
